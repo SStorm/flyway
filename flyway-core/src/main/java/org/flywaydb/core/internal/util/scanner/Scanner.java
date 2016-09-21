@@ -18,27 +18,37 @@ package org.flywaydb.core.internal.util.scanner;
 import org.flywaydb.core.api.FlywayException;
 import org.flywaydb.core.internal.util.FeatureDetector;
 import org.flywaydb.core.internal.util.Location;
+import org.flywaydb.core.internal.util.scanner.classpath.ClassPathScanner;
 import org.flywaydb.core.internal.util.scanner.classpath.ResourceAndClassScanner;
 import org.flywaydb.core.internal.util.scanner.classpath.android.AndroidScanner;
-import org.flywaydb.core.internal.util.scanner.classpath.ClassPathScanner;
 import org.flywaydb.core.internal.util.scanner.filesystem.FileSystemScanner;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * Scanner for Resources and Classes.
  */
 public class Scanner {
-    private final ResourceAndClassScanner resourceAndClassScanner;
+    private final List<ResourceAndClassScanner> scanners = new ArrayList<ResourceAndClassScanner>();
 
     private final ClassLoader classLoader;
     private final FileSystemScanner fileSystemScanner = new FileSystemScanner();
 
-    public Scanner(ClassLoader classLoader) {
+    public Scanner(ClassLoader classLoader, ResourceAndClassScanner... scanners) {
         this.classLoader = classLoader;
+        this.scanners.add(new ClassPathScanner(classLoader));
         if (new FeatureDetector(classLoader).isAndroidAvailable()) {
-            resourceAndClassScanner = new AndroidScanner(classLoader);
-        } else {
-            resourceAndClassScanner = new ClassPathScanner(classLoader);
+            this.scanners.add(new AndroidScanner(classLoader));
         }
+        if (scanners != null) {
+            this.scanners.addAll(Arrays.asList(scanners));
+        }
+    }
+
+    public Scanner(ClassLoader classLoader) {
+        this(classLoader, (ResourceAndClassScanner[]) null);
     }
 
     /**
@@ -50,14 +60,21 @@ public class Scanner {
      * @return The resources that were found.
      */
     public Resource[] scanForResources(Location location, String prefix, String suffix) {
+        List<Resource> results = new ArrayList<Resource>();
         try {
             if (location.isFileSystem()) {
                 return fileSystemScanner.scanForResources(location, prefix, suffix);
             }
-            return resourceAndClassScanner.scanForResources(location, prefix, suffix);
+            for (ResourceAndClassScanner scanner : scanners) {
+                Resource[] found = scanner.scanForResources(location, prefix, suffix);
+                if (found != null && found.length > 0) {
+                    results.addAll(Arrays.asList(found));
+                }
+            }
         } catch (Exception e) {
             throw new FlywayException("Unable to scan for SQL migrations in location: " + location, e);
         }
+        return results.toArray(new Resource[]{});
     }
 
 
@@ -72,7 +89,14 @@ public class Scanner {
      * @throws Exception when the location could not be scanned.
      */
     public Class<?>[] scanForClasses(Location location, Class<?> implementedInterface) throws Exception {
-        return resourceAndClassScanner.scanForClasses(location, implementedInterface);
+        List<Class<?>> results = new ArrayList<Class<?>>();
+        for (ResourceAndClassScanner scanner : scanners) {
+            Class<?>[] found = scanner.scanForClasses(location, implementedInterface);
+            if (found != null && found.length > 0) {
+                results.addAll(Arrays.asList(found));
+            }
+        }
+        return results.toArray(new Class[]{});
     }
 
     /**
